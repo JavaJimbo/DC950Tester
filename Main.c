@@ -15,6 +15,7 @@
  * 
  * 10-20-17: For UBW32 board and PIC795 with diagnostics
  * 10-21-17: Added CRC 
+ * 10-22-17: Cleaned up, added sendToUART(), so that all commands from Host get replies
  ************************************************************************************************************/
 
 #define true TRUE
@@ -23,8 +24,6 @@
 #define CR 13
 #define LF 10
 #define BACKSPACE 8
-
-// #define DIAGNOSTICS
 
 /** INCLUDES *******************************************************/
 #include <XC.h>
@@ -77,54 +76,56 @@
 #define BUFFERSIZE 128
 unsigned char HOSTRxBuffer[BUFFERSIZE];
 unsigned char HOSTRxBufferFull = false;
-unsigned char HYPERRxBuffer[BUFFERSIZE];
 
-#define BUFFERSIZE 128
 unsigned char HPRxBuffer[BUFFERSIZE];
 unsigned char HPRxBufferFull = false;
-
-
-unsigned char controlCommand = 0;
 unsigned short HPRxIndex = 0;
-unsigned short HPtestIndex = 0;
-short numRXxInterrrupts = 0;
-short numHPRXxInterrrupts = 0;
+
+unsigned char HOSTTxBuffer[BUFFERSIZE];
+unsigned char HOSTTxBufferFull = false;
 
 /** PRIVATE PROTOTYPES *********************************************/
 void InitializeSystem(void);
-unsigned char processInputString(unsigned char *ptrBuffer);
-unsigned char executeCommand(unsigned char *ptrCommand, unsigned char *ptrValue);
-unsigned char setPWM(unsigned char *ptrPWMstring);
-unsigned char setOutput(unsigned char *ptrPin, unsigned char *ptrPinState);
-unsigned char sendMeasCommand(void);
-unsigned char setRemoteHP(void);
-unsigned char resetHP(void);
-unsigned char diagnosticsPrintf(unsigned char *ptrString);
-extern BOOL CRCcheck(char *ptrPacket);
-extern UINT16  CRCcalculate(char *ptrPacket, BOOL addCRCtoPacket);
+unsigned char   processInputString(unsigned char *ptrBuffer);
+unsigned char   executeCommand(unsigned char *ptrCommand, unsigned char *ptrValue);
+unsigned char   setPWM(unsigned char *ptrPWMstring);
+unsigned char   setOutput(unsigned char *ptrPin, unsigned char *ptrPinState);
+unsigned char   diagnosticsPrintf(unsigned char *ptrString);
+unsigned char   sendToUART(unsigned char UartID, unsigned char *ptrUARTpacket);
+extern BOOL     CRCcheck(char *ptrPacket);
+extern UINT16   CRCcalculate(char *ptrPacket, BOOL addCRCtoPacket);
 
+unsigned char replyToHost(unsigned char *ptrMessage){
+    if (ptrMessage == NULL) return (FALSE);
+    if (strlen(ptrMessage) > BUFFERSIZE) return (FALSE);
+    strcpy(HOSTTxBuffer, ptrMessage);
+    CRCcalculate(HOSTTxBuffer, true);
+    sendToUART(HOSTuart, HOSTTxBuffer);    
+    return(TRUE);
+}
 
-int main(void) {
-    short counter = 0;
-    unsigned char strOutBuffer[BUFFERSIZE];
+int main(void) {      
+
     InitializeSystem();
 
     DelayMs(100);
 
-    diagnosticsPrintf("\r\rINTERFACE BOARD START\r\r");
-
     while (1) {
         if (HOSTRxBufferFull) {
-            HOSTRxBufferFull = false;      
-            if (!CRCcheck(HOSTRxBuffer)) sprintf (strOutBuffer, "CRC ERROR %d", counter++);
-            else sprintf (strOutBuffer, "CRC SUCCESS #%d", counter++);                        
-            CRCcalculate(strOutBuffer, true);
-            printf ("%s", strOutBuffer);
-            // if (!processInputString(HOSTRxBuffer)) printf("!ERROR");            
+            HOSTRxBufferFull = false;
+            if (!CRCcheck(HOSTRxBuffer)){
+                replyToHost("CRC ERROR");
+            }
+            else if (!processInputString(HOSTRxBuffer)){
+                replyToHost("COMMAND ERROR");
+            }
         }
-        if (HPRxBufferFull) {
+        if (HOSTTxBufferFull) {
+            HOSTTxBufferFull = false;
+            replyToHost(HOSTTxBuffer);
+        } else if (HPRxBufferFull) {
             HPRxBufferFull = false;
-            printf("HP: %s", HPRxBuffer);
+            replyToHost(HPRxBuffer);
         }
     }
 }
@@ -150,7 +151,7 @@ void InitializeSystem(void) {
     // Set up HP34401 MULTI HP UART
     UARTConfigure(HPuart, UART_ENABLE_HIGH_SPEED | UART_ENABLE_PINS_TX_RX_ONLY);
     UARTSetFifoMode(HPuart, UART_INTERRUPT_ON_TX_DONE | UART_INTERRUPT_ON_RX_NOT_EMPTY);
-    UARTSetLineControl(HPuart, UART_DATA_SIZE_8_BITS | UART_PARITY_NONE | UART_STOP_BITS_2);
+    UARTSetLineControl(HPuart, UART_DATA_SIZE_8_BITS | UART_PARITY_NONE | UART_STOP_BITS_1);
 #define SYS_FREQ 80000000
     UARTSetDataRate(HPuart, SYS_FREQ, 9600);
     UARTEnable(HPuart, UART_ENABLE_FLAGS(UART_PERIPHERAL | UART_RX | UART_TX));
@@ -181,19 +182,12 @@ void InitializeSystem(void) {
 
 unsigned char processInputString(unsigned char *ptrBuffer) {
     unsigned char *ptrCommand, *ptrValue;
-    unsigned char delimiters[] = "=>\r";
+    unsigned char delimiters[] = "$>[\r";
 
     ptrCommand = strtok(ptrBuffer, delimiters);
     if (!ptrCommand) return (false);
 
     ptrValue = strtok(NULL, delimiters);
-
-#ifdef DIAGNOSTICS    
-    printf("\r\rCommand: ");
-    printf("\r%s, ", ptrCommand);
-    printf("%s", ptrValue);    
-    printf("\r\rResult: ");
-#endif
 
     if (executeCommand(ptrCommand, ptrValue))
         return (true);
@@ -202,33 +196,33 @@ unsigned char processInputString(unsigned char *ptrBuffer) {
 
 unsigned char executeCommand(unsigned char *ptrCommand, unsigned char *ptrValue) {
     if (strstr(ptrCommand, "HP_RELAY_ON")) {
-        PORTSetBits(IOPORT_B, BIT_15);
-        diagnosticsPrintf("\rHP RELAY ON");
+        PORTSetBits(IOPORT_B, BIT_15);        
     } else if (strstr(ptrCommand, "HP_RELAY_OFF")) {
-        PORTClearBits(IOPORT_B, BIT_15);
-        diagnosticsPrintf("\rHP RELAY OFF");
+        PORTClearBits(IOPORT_B, BIT_15);        
     } else if (strstr(ptrCommand, "PWM"))
         setPWM(ptrValue);
     else if (strstr(ptrCommand, "TTL_IN")) {
         if (PORTReadBits(IOPORT_E, BIT_1))
-            printf("\rTTL IN =HIGH");
-        else printf("\rTTL IN =LOW");
-    } else if (strstr(ptrCommand, "MEAS?"))
-        sendMeasCommand();
-    else if (strstr(ptrCommand, "RESET"))
-        resetHP();
-    else if (strstr(ptrCommand, "REMOTE"))
-        setRemoteHP();
+            strcpy(HOSTTxBuffer, "HIGH");
+        else strcpy(HOSTTxBuffer, "LOW");
+        HOSTTxBufferFull = true;
+        return(true);
+    } else if (strstr(ptrCommand, "MEAS?")){        
+        sendToUART(HPuart, ":MEAS?\r\n");
+        return(true);
+    }
+    else if (strstr(ptrCommand, "RESET"))        
+        sendToUART(HPuart, "*RST\r\n");
+    else if (strstr(ptrCommand, "REMOTE"))        
+        sendToUART(HPuart, ":SYST:REM\r\n");
     else if (strstr(ptrCommand, "SET_TTL_HIGH")) {
-        PORTSetBits(IOPORT_E, BIT_0);
-        diagnosticsPrintf("\rTTL OUTPUT = HIGH");
+        PORTSetBits(IOPORT_E, BIT_0);        
     } else if (strstr(ptrCommand, "SET_TTL_LOW")) {
         PORTClearBits(IOPORT_E, BIT_0);
-        diagnosticsPrintf("\rTTL OUTUPUT = LOW");
     } else {
-        diagnosticsPrintf("\rNo command found");
         return (false);
     }
+    replyToHost("COM PORT OK");
     return (true);
 }
 
@@ -243,15 +237,12 @@ unsigned char setPWM(unsigned char *ptrPWMvalue) {
     PWMvalue = atoi(ptrPWMvalue);
     if (PWMvalue > MAXPWM) PWMvalue = MAXPWM;
     SetDCOC1PWM(PWMvalue);
-#ifdef DIAGNOSTICS    
-    printf("\rSET PWM = %d", PWMvalue);
-#endif
 }
 
 
 // HP UART interrupt handler it is set at priority level 2
 void __ISR(HP_VECTOR, ipl2) IntHPUartHandler(void) {
-    unsigned char ch;
+    char ch;
     if (HPbits.OERR || HPbits.FERR) {
         if (UARTReceivedDataIsAvailable(HPuart))
             ch = UARTGetDataByte(HPuart);
@@ -259,20 +250,18 @@ void __ISR(HP_VECTOR, ipl2) IntHPUartHandler(void) {
         HPRxIndex = 0;
     } else if (INTGetFlag(INT_SOURCE_UART_RX(HPuart))) {
         INTClearFlag(INT_SOURCE_UART_RX(HPuart));
-        numHPRXxInterrrupts++;
         if (UARTReceivedDataIsAvailable(HPuart)) {
-            ch = toupper(UARTGetDataByte(HPuart));
-            if (ch != '\n') {
-                if (HPRxIndex < BUFFERSIZE)
-                    HPRxBuffer[HPRxIndex++] = ch;
-                if (ch == CR) {
-                    HPRxBufferFull = true;
-                    if (HPRxIndex < BUFFERSIZE) {
-                        HPRxBuffer[HPRxIndex] = '\0';
+            ch = (UARTGetDataByte(HPuart));
+            if (ch != LF && ch != 0) {
+                if (HPRxIndex < BUFFERSIZE) {
+                    if (ch == CR) {
                         HPRxBufferFull = true;
+                        HPRxBuffer[HPRxIndex] = '\0';
+                        HPRxBufferFull = true;                        
+                        HPRxIndex = 0;
                     }
-                    HPRxIndex = 0;
-                }
+                    else HPRxBuffer[HPRxIndex++] = ch;
+                } else HPRxIndex = 0; 
             }
         }
         if (INTGetFlag(INT_SOURCE_UART_TX(HPuart))) {
@@ -281,34 +270,8 @@ void __ISR(HP_VECTOR, ipl2) IntHPUartHandler(void) {
     }
 }
 
-unsigned char sendToUART(unsigned char *ptrUARTname, unsigned char *ptrUARTpacket) {
-    short i;
-    unsigned char ch;
-    
-    if (strstr(ptrUARTname, "HP") && strlen(ptrUARTpacket) < BUFFERSIZE) {
-        i = 0;
-        do {
-            ch = ptrUARTpacket[i++];
-            if (ch == '\0') break;
 
-            while (!UARTTransmitterIsReady(HPuart));
-            UARTSendDataByte(HPuart, ch);
-
-            DelayMs(1);
-        } while (i < BUFFERSIZE);
-#ifdef DIAGNOSTICS
-        printf("\rSENT: %s", ptrUARTpacket);
-#endif        
-        return (true);
-    }
-
-    return (false);
-}
-
-#define CR 13
-#define BACKSPACE 8
 // HOST UART interrupt handler it is set at priority level 2
-
 void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
     unsigned char ch;
     static unsigned short HOSTRxIndex = 0;
@@ -320,12 +283,10 @@ void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
         HOSTRxIndex = 0;
     } else if (INTGetFlag(INT_SOURCE_UART_RX(HOSTuart))) {
         INTClearFlag(INT_SOURCE_UART_RX(HOSTuart));
-        numRXxInterrrupts++;
         if (UARTReceivedDataIsAvailable(HOSTuart)) {
-            // ch = toupper(UARTGetDataByte(HOSTuart));
-            ch = UARTGetDataByte(HOSTuart);
-            // if (HPtestIndex < BUFFERSIZE) HYPERRxBuffer[HPtestIndex++] = ch;
-            if (ch == '\n' || ch == 0);
+            ch = toupper(UARTGetDataByte(HOSTuart));            
+            if (ch == '$') HOSTRxIndex = 0;
+            if (ch == LF || ch == 0);
             else if (ch == BACKSPACE) {
                 while (!UARTTransmitterIsReady(HOSTuart));
                 UARTSendDataByte(HOSTuart, ' ');
@@ -333,13 +294,13 @@ void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
                 UARTSendDataByte(HOSTuart, BACKSPACE);
                 if (HOSTRxIndex > 0) HOSTRxIndex--;
             } else if (ch == CR) {
-                if (HOSTRxIndex < (BUFFERSIZE-1)){
-                    HOSTRxBuffer[HOSTRxIndex] =  CR;
-                    HOSTRxBuffer[HOSTRxIndex+1] = '\0'; // $$$$
+                if (HOSTRxIndex < (BUFFERSIZE - 1)) {
+                    HOSTRxBuffer[HOSTRxIndex] = CR;
+                    HOSTRxBuffer[HOSTRxIndex + 1] = '\0'; // $$$$
                     HOSTRxBufferFull = true;
                 }
                 HOSTRxIndex = 0;
-            } else if (ch < 27) controlCommand = ch;
+            }                
             else if (HOSTRxIndex < BUFFERSIZE)
                 HOSTRxBuffer[HOSTRxIndex++] = ch;
         }
@@ -349,62 +310,22 @@ void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
     }
 }
 
-unsigned char sendMeasCommand(void) {
-    unsigned char strCommand[] = ":MEAS?\r\n";
+
+unsigned char sendToUART(unsigned char UartID, unsigned char *ptrUARTpacket){
     short i;
     unsigned char ch;
-    i = 0;
-    do {
-        ch = strCommand[i++];
-        if (ch == '\0') break;
-        while (!UARTTransmitterIsReady(HPuart));
-        UARTSendDataByte(HPuart, ch);
-    } while (i < BUFFERSIZE);
-#ifdef DIAGNOSTICS
-    printf("\rSENT: %s", strCommand);    
-#endif     
-    return (true);
+
+    if (strlen(ptrUARTpacket) < BUFFERSIZE) {
+        i = 0;
+        do {
+            ch = ptrUARTpacket[i++];
+            if (!ch) break;
+            while (!UARTTransmitterIsReady(UartID));
+            UARTSendDataByte(UartID, ch);
+
+        } while (i < BUFFERSIZE);
+        return (true);
+    }
+    else return (false);
 }
 
-unsigned char resetHP(void) {
-    unsigned char strCommand[] = "*RST\r\n";
-    short i;
-    unsigned char ch;
-    i = 0;
-    do {
-        ch = strCommand[i++];
-        if (ch == '\0') break;
-        while (!UARTTransmitterIsReady(HPuart));
-        UARTSendDataByte(HPuart, ch);
-    } while (i < BUFFERSIZE);
-#ifdef DIAGNOSTICS
-    printf("\rSENT: %s", strCommand);    
-#endif         
-    return (true);
-}
-
-unsigned char setRemoteHP(void) {
-    unsigned char strCommand[] = ":SYST:REM\r\n";
-    short i;
-    unsigned char ch;
-    i = 0;
-    do {
-        ch = strCommand[i++];
-        if (ch == '\0') break;
-        while (!UARTTransmitterIsReady(HPuart));
-        UARTSendDataByte(HPuart, ch);
-    } while (i < BUFFERSIZE);
-#ifdef DIAGNOSTICS
-    printf("\rSENT: %s", strCommand);    
-#endif     
-    return (true);
-}
-
-unsigned char diagnosticsPrintf(unsigned char *ptrString) {
-#ifdef DIAGNOSTICS
-    printf("%s", ptrString);
-    return (TRUE);
-#else
-    return (FALSE);
-#endif
-}
