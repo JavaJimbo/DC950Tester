@@ -97,7 +97,7 @@ UINT16 CRCcalculate(char *ptrPacket, BOOL addCRCtoPacket) {
 
 BOOL CRCcheck(char *ptrPacket) {	
 	char *ptrCRC;
-	char strCRC[8] = "0x";	
+	char strCRC[8];	
     int intCRCvalue, intCRCcheck;
 
 	if (ptrPacket == NULL) return (FALSE);
@@ -108,6 +108,8 @@ BOOL CRCcheck(char *ptrPacket) {
 	ptrCRC[0] = '\0';						// So terminate string at first bracket.
 											// Now when routine is done, ptrPacket will only include data before CRC
 											// This will make it easier to process data.
+    strCRC[0] = '0';
+    strCRC[1] = 'x';        
 	strCRC[2] = ptrCRC[1];
 	strCRC[3] = ptrCRC[2];
 	strCRC[4] = ptrCRC[3];
@@ -120,29 +122,4 @@ BOOL CRCcheck(char *ptrPacket) {
     if (intCRCcheck == intCRCvalue) return (TRUE);
     return (FALSE);
 }
-
-/*
-BOOL CRCcheck(char *ptrPacket) {    
-    
-    char delimiters[] = "[]", *ptrCRC, strCRC[8] = "0x", *ptrData;
-    int intCRCvalue, intCRCcheck;
-
-    if (ptrPacket == NULL) return (FALSE);
-
-    ptrData = strtok(ptrPacket, delimiters);
-    if (ptrData != NULL) ptrCRC = strtok(NULL, delimiters);
-    else return (FALSE);
-
-    if (ptrCRC != NULL && strlen(ptrCRC) <= 6) {
-        strcat(strCRC, ptrCRC);
-        intCRCvalue = strtol(strCRC, NULL, 16);
-    } else return (FALSE);
-
-    intCRCcheck = CRCcalculate(ptrData, FALSE);
-
-    if (intCRCcheck == intCRCvalue) return (TRUE);
-    else return (FALSE);
-}
-*/
-
 

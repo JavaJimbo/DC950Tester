@@ -296,7 +296,7 @@ void __ISR(HOST_VECTOR, ipl2) IntHostUartHandler(void) {
             } else if (ch == CR) {
                 if (HOSTRxIndex < (BUFFERSIZE - 1)) {
                     HOSTRxBuffer[HOSTRxIndex] = CR;
-                    HOSTRxBuffer[HOSTRxIndex + 1] = '\0'; // $$$$
+                    HOSTRxBuffer[HOSTRxIndex + 1] = '\0'; 
                     HOSTRxBufferFull = true;
                 }
                 HOSTRxIndex = 0;
