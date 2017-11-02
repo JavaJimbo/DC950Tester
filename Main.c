@@ -16,6 +16,9 @@
  * 10-20-17: For UBW32 board and PIC795 with diagnostics
  * 10-21-17: Added CRC 
  * 10-22-17: Cleaned up, added sendToUART(), so that all commands from Host get replies
+ * 10-30-17: Fixed bug: processInputString() was being sent twice
+ * 10-31-17: Removed all code for second and third UARts. Now only HOST UART is used.
+ * 11-2-17:  No big changes, just minor mods.
  ************************************************************************************************************/
 
 #define true TRUE
@@ -67,20 +70,9 @@
 #define HOST_VECTOR _UART_2_VECTOR
 
 
-// UART FOR HP34401 MULTIMETER UART
-#define HPuart UART4
-#define HPbits U4STAbits
-#define HP_VECTOR _UART_4_VECTOR
-
-
 #define BUFFERSIZE 128
 unsigned char HOSTRxBuffer[BUFFERSIZE];
 unsigned char HOSTRxBufferFull = false;
-
-unsigned char HPRxBuffer[BUFFERSIZE];
-unsigned char HPRxBufferFull = false;
-unsigned short HPRxIndex = 0;
-
 unsigned char HOSTTxBuffer[BUFFERSIZE];
 unsigned char HOSTTxBufferFull = false;
 
@@ -104,28 +96,18 @@ unsigned char replyToHost(unsigned char *ptrMessage){
     return(TRUE);
 }
 
-int main(void) {      
-
+int main(void) {     
     InitializeSystem();
-
     DelayMs(100);
+    // printf("\rSTART");
 
     while (1) {
         if (HOSTRxBufferFull) {
-            HOSTRxBufferFull = false;
-            if (!CRCcheck(HOSTRxBuffer)){
-                replyToHost("CRC ERROR");
-            }
-            else if (!processInputString(HOSTRxBuffer)){
-                replyToHost("COMMAND ERROR");
-            }
-        }
-        if (HOSTTxBufferFull) {
-            HOSTTxBufferFull = false;
-            replyToHost(HOSTTxBuffer);
-        } else if (HPRxBufferFull) {
-            HPRxBufferFull = false;
-            replyToHost(HPRxBuffer);
+            HOSTRxBufferFull = false;               
+            if (!CRCcheck(HOSTRxBuffer))
+                replyToHost("CRC ERROR");                        
+            else if (!processInputString(HOSTRxBuffer))
+                replyToHost("COMMAND ERROR");                                    
         }
     }
 }
@@ -147,21 +129,6 @@ void InitializeSystem(void) {
     INTEnable(INT_SOURCE_UART_RX(HOSTuart), INT_ENABLED);
     INTSetVectorPriority(INT_VECTOR_UART(HOSTuart), INT_PRIORITY_LEVEL_2);
     INTSetVectorSubPriority(INT_VECTOR_UART(HOSTuart), INT_SUB_PRIORITY_LEVEL_0);
-
-    // Set up HP34401 MULTI HP UART
-    UARTConfigure(HPuart, UART_ENABLE_HIGH_SPEED | UART_ENABLE_PINS_TX_RX_ONLY);
-    UARTSetFifoMode(HPuart, UART_INTERRUPT_ON_TX_DONE | UART_INTERRUPT_ON_RX_NOT_EMPTY);
-    UARTSetLineControl(HPuart, UART_DATA_SIZE_8_BITS | UART_PARITY_NONE | UART_STOP_BITS_1);
-#define SYS_FREQ 80000000
-    UARTSetDataRate(HPuart, SYS_FREQ, 9600);
-    UARTEnable(HPuart, UART_ENABLE_FLAGS(UART_PERIPHERAL | UART_RX | UART_TX));
-
-    // Configure HP UART Interrupts
-    INTEnable(INT_SOURCE_UART_TX(HPuart), INT_DISABLED);
-    INTEnable(INT_SOURCE_UART_RX(HPuart), INT_ENABLED);
-    INTSetVectorPriority(INT_VECTOR_UART(HPuart), INT_PRIORITY_LEVEL_2);
-    INTSetVectorSubPriority(INT_VECTOR_UART(HPuart), INT_SUB_PRIORITY_LEVEL_0);
-
 
     // SET UP PWM OUTPUT
     OpenOC1(OC_ON | OC_TIMER2_SRC | OC_PWM_FAULT_PIN_DISABLE, 0, 0);
@@ -194,41 +161,60 @@ unsigned char processInputString(unsigned char *ptrBuffer) {
     return (false);
 }
 
+#define RELAY_A_ON() PORTSetBits(IOPORT_B, BIT_12)
+#define RELAY_B_ON() PORTSetBits(IOPORT_B, BIT_13)
+#define RELAY_C_ON() PORTSetBits(IOPORT_B, BIT_14)
+#define RELAY_D_ON() PORTSetBits(IOPORT_B, BIT_15)
+
+#define RELAY_A_OFF() PORTClearBits(IOPORT_B, BIT_12)
+#define RELAY_B_OFF() PORTClearBits(IOPORT_B, BIT_13)
+#define RELAY_C_OFF() PORTClearBits(IOPORT_B, BIT_14)
+#define RELAY_D_OFF() PORTClearBits(IOPORT_B, BIT_15)
+
+
 unsigned char executeCommand(unsigned char *ptrCommand, unsigned char *ptrValue) {
-    if (strstr(ptrCommand, "HP_RELAY_ON")) {
-        PORTSetBits(IOPORT_B, BIT_15);        
-    } else if (strstr(ptrCommand, "HP_RELAY_OFF")) {
-        PORTClearBits(IOPORT_B, BIT_15);        
-    } else if (strstr(ptrCommand, "PWM"))
+    if (strstr(ptrCommand, "PWM"))
         setPWM(ptrValue);
     else if (strstr(ptrCommand, "TTL_IN")) {
-        if (PORTReadBits(IOPORT_E, BIT_1))
-            strcpy(HOSTTxBuffer, "HIGH");
-        else strcpy(HOSTTxBuffer, "LOW");
-        HOSTTxBufferFull = true;
-        return(true);
-    } else if (strstr(ptrCommand, "MEAS?")){        
-        sendToUART(HPuart, ":MEAS?\r\n");
+        if (PORTReadBits(IOPORT_E, BIT_1)) replyToHost("OK");            
+        else replyToHost("FAULT");        
         return(true);
     }
-    else if (strstr(ptrCommand, "RESET"))        
-        sendToUART(HPuart, "*RST\r\n");
-    else if (strstr(ptrCommand, "REMOTE"))        
-        sendToUART(HPuart, ":SYST:REM\r\n");
-    else if (strstr(ptrCommand, "SET_TTL_HIGH")) {
+    else if (strstr(ptrCommand, "TTL_HIGH")) {
         PORTSetBits(IOPORT_E, BIT_0);        
-    } else if (strstr(ptrCommand, "SET_TTL_LOW")) {
+    } else if (strstr(ptrCommand, "TTL_LOW")) {
         PORTClearBits(IOPORT_E, BIT_0);
+    } else if (strstr(ptrCommand, "LAMP")) {        
+        RELAY_B_OFF();        
+        RELAY_D_ON();        
+    } else if (strstr(ptrCommand, "CTRL")) {        
+        RELAY_B_ON();        
+        RELAY_D_OFF();
+    } else if (strstr(ptrCommand, "VREF")) {        
+        RELAY_B_OFF();        
+        RELAY_D_OFF();
+    } else if (strstr(ptrCommand, "INHIBIT")) {
+        if (strstr(ptrValue, "ON")) RELAY_C_ON();
+        else RELAY_C_OFF();
+    } else if (strstr(ptrCommand, "RESET")) {   
+        RELAY_A_OFF();
+        RELAY_B_OFF();
+        RELAY_C_OFF();
+        RELAY_D_OFF();
+        PORTSetBits(IOPORT_E, BIT_0); // Make sure filter actuator is ON
+        setPWM("0");
     } else {
         return (false);
     }
-    replyToHost("COM PORT OK");
+    replyToHost("OK");
     return (true);
 }
 
 unsigned char setPWM(unsigned char *ptrPWMvalue) {
     unsigned short i, strLength, PWMvalue = 0;
-
+    
+    if (ptrPWMvalue == NULL) return (false);
+        
     strLength = strlen(ptrPWMvalue);
     for (i = 0; i < strLength; i++) {
         if (i >= BUFFERSIZE) return (false);
@@ -237,37 +223,6 @@ unsigned char setPWM(unsigned char *ptrPWMvalue) {
     PWMvalue = atoi(ptrPWMvalue);
     if (PWMvalue > MAXPWM) PWMvalue = MAXPWM;
     SetDCOC1PWM(PWMvalue);
-}
-
-
-// HP UART interrupt handler it is set at priority level 2
-void __ISR(HP_VECTOR, ipl2) IntHPUartHandler(void) {
-    char ch;
-    if (HPbits.OERR || HPbits.FERR) {
-        if (UARTReceivedDataIsAvailable(HPuart))
-            ch = UARTGetDataByte(HPuart);
-        HPbits.OERR = 0;
-        HPRxIndex = 0;
-    } else if (INTGetFlag(INT_SOURCE_UART_RX(HPuart))) {
-        INTClearFlag(INT_SOURCE_UART_RX(HPuart));
-        if (UARTReceivedDataIsAvailable(HPuart)) {
-            ch = (UARTGetDataByte(HPuart));
-            if (ch != LF && ch != 0) {
-                if (HPRxIndex < BUFFERSIZE) {
-                    if (ch == CR) {
-                        HPRxBufferFull = true;
-                        HPRxBuffer[HPRxIndex] = '\0';
-                        HPRxBufferFull = true;                        
-                        HPRxIndex = 0;
-                    }
-                    else HPRxBuffer[HPRxIndex++] = ch;
-                } else HPRxIndex = 0; 
-            }
-        }
-        if (INTGetFlag(INT_SOURCE_UART_TX(HPuart))) {
-            INTClearFlag(INT_SOURCE_UART_TX(HPuart));
-        }
-    }
 }
 
 
