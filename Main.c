@@ -17,8 +17,9 @@
  * 10-21-17: Added CRC 
  * 10-22-17: Cleaned up, added sendToUART(), so that all commands from Host get replies
  * 10-30-17: Fixed bug: processInputString() was being sent twice
- * 10-31-17: Removed all code for second and third UARts. Now only HOST UART is used.
- * 11-2-17:  No big changes, just minor mods.
+ * 10-31-17: Removed all code for second and third UARts. Now only HOST Uart is used.
+ * 12-12-17: Revised for DC950 Test System board Rev 1.0
+ * 01-18-19: No changes. Noted that B1 is TTL in and B0 is TTL out.
  ************************************************************************************************************/
 
 #define true TRUE
@@ -27,6 +28,14 @@
 #define CR 13
 #define LF 10
 #define BACKSPACE 8
+
+#define RELAY_K3_ON() PORTSetBits(IOPORT_B, BIT_13)
+#define RELAY_K2_ON() PORTSetBits(IOPORT_B, BIT_14)
+#define RELAY_K1_ON() PORTSetBits(IOPORT_B, BIT_15)
+
+#define RELAY_K3_OFF() PORTClearBits(IOPORT_B, BIT_13)
+#define RELAY_K2_OFF() PORTClearBits(IOPORT_B, BIT_14)
+#define RELAY_K1_OFF() PORTClearBits(IOPORT_B, BIT_15)
 
 /** INCLUDES *******************************************************/
 #include <XC.h>
@@ -97,16 +106,20 @@ unsigned char replyToHost(unsigned char *ptrMessage){
 }
 
 int main(void) {     
-    InitializeSystem();
-    DelayMs(100);
-    // printf("\rSTART");
-
+    int counter = 0;
+    InitializeSystem();    
+    
+    RELAY_K1_OFF();
+    RELAY_K2_OFF();
+    RELAY_K3_OFF();
+    
     while (1) {
         if (HOSTRxBufferFull) {
             HOSTRxBufferFull = false;               
             if (!CRCcheck(HOSTRxBuffer))
-                replyToHost("CRC ERROR");                        
-            else if (!processInputString(HOSTRxBuffer))
+               replyToHost("CRC ERROR");                        
+            else 
+            if (!processInputString(HOSTRxBuffer))
                 replyToHost("COMMAND ERROR");                                    
         }
     }
@@ -138,8 +151,8 @@ void InitializeSystem(void) {
     PORTClearBits(IOPORT_B, BIT_12 | BIT_13 | BIT_14 | BIT_15);
     mPORTBSetPinsDigitalOut(BIT_12 | BIT_13 | BIT_14 | BIT_15);
 
-    PORTSetPinsDigitalIn(IOPORT_E, BIT_1);
-    PORTSetPinsDigitalOut(IOPORT_E, BIT_0);
+    PORTSetPinsDigitalIn(IOPORT_B, BIT_1);
+    PORTSetPinsDigitalOut(IOPORT_B, BIT_0);
     PORTSetBits(IOPORT_E, BIT_0);
 
     // Turn on the interrupts
@@ -161,46 +174,34 @@ unsigned char processInputString(unsigned char *ptrBuffer) {
     return (false);
 }
 
-#define RELAY_A_ON() PORTSetBits(IOPORT_B, BIT_12)
-#define RELAY_B_ON() PORTSetBits(IOPORT_B, BIT_13)
-#define RELAY_C_ON() PORTSetBits(IOPORT_B, BIT_14)
-#define RELAY_D_ON() PORTSetBits(IOPORT_B, BIT_15)
-
-#define RELAY_A_OFF() PORTClearBits(IOPORT_B, BIT_12)
-#define RELAY_B_OFF() PORTClearBits(IOPORT_B, BIT_13)
-#define RELAY_C_OFF() PORTClearBits(IOPORT_B, BIT_14)
-#define RELAY_D_OFF() PORTClearBits(IOPORT_B, BIT_15)
-
-
 unsigned char executeCommand(unsigned char *ptrCommand, unsigned char *ptrValue) {
     if (strstr(ptrCommand, "PWM"))
         setPWM(ptrValue);
     else if (strstr(ptrCommand, "TTL_IN")) {
-        if (PORTReadBits(IOPORT_E, BIT_1)) replyToHost("OK");            
+        if (PORTReadBits(IOPORT_B, BIT_1)) replyToHost("OK");            
         else replyToHost("FAULT");        
         return(true);
     }
     else if (strstr(ptrCommand, "TTL_HIGH")) {
-        PORTSetBits(IOPORT_E, BIT_0);        
+        PORTSetBits(IOPORT_B, BIT_0);        
     } else if (strstr(ptrCommand, "TTL_LOW")) {
-        PORTClearBits(IOPORT_E, BIT_0);
-    } else if (strstr(ptrCommand, "LAMP")) {        
-        RELAY_B_OFF();        
-        RELAY_D_ON();        
-    } else if (strstr(ptrCommand, "CTRL")) {        
-        RELAY_B_ON();        
-        RELAY_D_OFF();
-    } else if (strstr(ptrCommand, "VREF")) {        
-        RELAY_B_OFF();        
-        RELAY_D_OFF();
+        PORTClearBits(IOPORT_B, BIT_0);
+    } else if (strstr(ptrCommand, "LAMP")) {                
+        RELAY_K2_OFF();
+        RELAY_K3_ON();       
+    } else if (strstr(ptrCommand, "CTRL")) {                
+        RELAY_K2_ON();
+        RELAY_K3_OFF();                
+    } else if (strstr(ptrCommand, "VREF")) {                
+        RELAY_K2_OFF();
+        RELAY_K3_OFF();         
     } else if (strstr(ptrCommand, "INHIBIT")) {
-        if (strstr(ptrValue, "ON")) RELAY_C_ON();
-        else RELAY_C_OFF();
+        if (strstr(ptrValue, "ON")) RELAY_K1_ON();
+        else RELAY_K1_OFF();
     } else if (strstr(ptrCommand, "RESET")) {   
-        RELAY_A_OFF();
-        RELAY_B_OFF();
-        RELAY_C_OFF();
-        RELAY_D_OFF();
+        RELAY_K1_OFF();
+        RELAY_K2_OFF();
+        RELAY_K3_OFF();
         PORTSetBits(IOPORT_E, BIT_0); // Make sure filter actuator is ON
         setPWM("0");
     } else {
