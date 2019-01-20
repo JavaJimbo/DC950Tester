@@ -19,6 +19,7 @@
  * 10-30-17: Fixed bug: processInputString() was being sent twice
  * 10-31-17: Removed all code for second and third UARts. Now only HOST Uart is used.
  * 12-12-17: Revised for DC950 Test System board Rev 1.0
+ * 1-16-18:  Added FAULT signal input check
  ************************************************************************************************************/
 
 #define true TRUE
@@ -104,8 +105,7 @@ unsigned char replyToHost(unsigned char *ptrMessage){
     return(TRUE);
 }
 
-int main(void) {     
-    int counter = 0;
+int main(void) {         
     InitializeSystem();    
     
     RELAY_K1_OFF();
@@ -153,6 +153,7 @@ void InitializeSystem(void) {
     PORTSetPinsDigitalIn(IOPORT_B, BIT_1);
     PORTSetPinsDigitalOut(IOPORT_B, BIT_0);
     PORTSetBits(IOPORT_E, BIT_0);
+    PORTSetPinsDigitalIn(IOPORT_D, BIT_15);  // Initialize FAULT signal input
 
     // Turn on the interrupts
     INTEnableSystemMultiVectoredInt();
@@ -180,6 +181,11 @@ unsigned char executeCommand(unsigned char *ptrCommand, unsigned char *ptrValue)
         if (PORTReadBits(IOPORT_B, BIT_1)) replyToHost("OK");            
         else replyToHost("FAULT");        
         return(true);
+    }
+    else if (strstr(ptrCommand, "FAULT_IN")){
+        if (PORTReadBits(IOPORT_D, BIT_15)) replyToHost("HIGH");
+        else replyToHost("LOW");
+        return (true);
     }
     else if (strstr(ptrCommand, "TTL_HIGH")) {
         PORTSetBits(IOPORT_B, BIT_0);        
